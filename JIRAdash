@@ -1,0 +1,51 @@
+#!/bin/env python3
+import getopt, sys
+
+import app
+
+VERSION = "0.1.0"
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+def usage():
+    print("usage: JIRAdash [arguments...]")
+    print("    -h, --help:     print this help message")
+    print("    -v, --version:  print current version")
+    print("    -i, --index:    initialize or update index via JIRA API")
+
+def main():
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "vhiq", ["help", "version", "index", "query"])
+    except getopt.GetoptError:
+        usage()
+        sys.exit(1)
+
+    index=False
+    query=False
+
+    for o, a in opts:
+        if o in ("-v", "--version"):
+            print(f"JIRAdash version {VERSION}")
+            sys.exit(0)
+        elif o in ("-h", "--help"):
+            usage()
+            sys.exit(0)
+        elif o in ("-i", "--index"):
+            index=True
+        elif o in ("-q", "--query"):
+            query=True
+
+    if not index and not query:
+        app.init_window()
+        sys.exit(0)
+
+    if index and query:
+        eprint("--index and --query are incompatible arguments.")
+        sys.exit(1)
+
+    print("index", index)
+    print("query", query)
+
+if __name__ == "__main__":
+    main()
