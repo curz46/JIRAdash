@@ -1,10 +1,11 @@
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gio', '2.0')
-from gi.repository import Gtk, Gio, GObject
+from gi.repository import Gtk, Gdk, Gio, GObject
 
 WIDTH  = 800
 HEIGHT = 200
+
 
 class Item(GObject.GObject):
 
@@ -19,10 +20,11 @@ class MyWindow(Gtk.Window):
         self.set_size_request(WIDTH, HEIGHT)
         self.set_resizable(False)
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(vbox)
 
         textbox = Gtk.Entry()
+        #textbox.set_size_request(WIDTH, 5)
         vbox.pack_start(textbox, True, True, 0)
 
         item = Item()
@@ -46,6 +48,17 @@ class MyWindow(Gtk.Window):
         return label
 
 def init_window():
+    screen = Gdk.Screen.get_default()
+    provider = Gtk.CssProvider()
+    style_context = Gtk.StyleContext()
+    style_context.add_provider_for_screen(
+            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+    css = b"""
+    entry { min-height: 0px; }
+    """
+    provider.load_from_data(css)
+
     win = MyWindow()
     win.connect("delete-event", Gtk.main_quit)
     win.show_all()

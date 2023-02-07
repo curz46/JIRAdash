@@ -1,7 +1,7 @@
 #!/bin/env python3
 import getopt, sys
 
-import app
+import dash
 
 VERSION = "0.1.0"
 
@@ -37,7 +37,7 @@ def main():
             query=True
 
     if not index and not query:
-        app.init_window()
+        dash.init_window()
         sys.exit(0)
 
     if index and query:
