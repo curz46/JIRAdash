@@ -1,0 +1,13 @@
+{
+  "custom_fields": {
+      "db_key1": "customfield1"
+  },
+  "gui": {
+    "columns": ["db_key1"],
+    "filters": {
+        "field": "db_key1",
+        "default_filters": ["Some Value"]
+    }
+  }
+}
+

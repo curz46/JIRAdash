@@ -1,1 +1,3 @@
 __pycache__/
+schema.json
+*.db

@@ -1,9 +1,25 @@
 #!/bin/env python3
 import getopt, sys
+import json
+import os
+import sqlite3
+from datetime import datetime
+
+from jira import JIRA
 
 import dash
 
 VERSION = "0.1.0"
+
+SCHEMA_FILE = "schema.json"
+
+JIRA_URL = os.environ.get("JIRA_URL")
+JIRA_USERNAME = os.environ.get("JIRA_USERNAME")
+JIRA_PASSWORD = os.environ.get("JIRA_PASSWORD")
+
+JIRA_QUERY = os.environ.get("JIRA_QUERY")
+
+DATABASE_NAME = "jira_issues.db"
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -13,6 +29,85 @@ def usage():
     print("    -h, --help:     print this help message")
     print("    -v, --version:  print current version")
     print("    -i, --index:    initialize or update index via JIRA API")
+
+
+def load_schema():
+    with open(SCHEMA_FILE, "r") as f:
+        data = json.load(f)
+        return data
+
+def get_field_value(issue, field_path):
+    field_parts = field_path.split(".")
+    value = issue
+    for part in field_parts:
+        if not value:
+            break
+        value = getattr(value, part, None)
+    return value
+
+def create_database(fields):
+    conn = sqlite3.connect(DATABASE_NAME)
+    cur = conn.cursor()
+    field_columns = ", ".join([f"{key} TEXT" for key in fields.keys()])
+    cur.execute(f'''CREATE TABLE IF NOT EXISTS issues
+                   (id INTEGER PRIMARY KEY, key TEXT, summary TEXT, status TEXT, updated_time TEXT, {field_columns})''')
+    conn.commit()
+    return conn
+
+def update_jira_index(conn, fields):
+    jira = JIRA(JIRA_URL, basic_auth=(JIRA_USERNAME, JIRA_PASSWORD))
+
+    total_issues = 1000
+    batch_size = 100
+    start_at = 0
+
+    cur = conn.cursor()
+
+    # Check if the database is initialized
+    cur.execute("SELECT COUNT(*) FROM issues")
+    count = cur.fetchone()[0]
+
+    # Get the maximum updated_time from the database
+    cur.execute("SELECT MAX(updated_time) FROM issues")
+    max_updated_time = cur.fetchone()[0]
+
+    # Format date for JQL 
+    if max_updated_time is not None:
+        max_updated_time = datetime.strptime(max_updated_time, "%Y-%m-%dT%H:%M:%S.%f+0000")
+        max_updated_time = max_updated_time.strftime("%Y-%m-%d %H:%M")
+
+    # Update the JQL query based on the database state
+    if count > 0 and max_updated_time is not None:
+        JQL_query = f"{JIRA_QUERY} AND updated >= '{max_updated_time}' ORDER BY updated ASC"
+        print("Updating index based on last update time...")
+    else:
+        JQL_query = JIRA_QUERY
+        print("Initializing the index with the first 1000 issues...")
+
+    while total_issues is None or start_at < total_issues:
+        issues = jira.search_issues(JQL_query, startAt=start_at, maxResults=batch_size)
+
+        if total_issues is None:
+            total_issues = issues.total
+
+        # Wrap the issues list in tqdm to display the progress bar
+        for issue in issues:
+            field_values = [get_field_value(issue.fields, field_id) for field_id in fields.values()]
+            field_names = ", ".join(fields.keys())
+            field_placeholders = ", ".join(["?" for _ in fields.keys()])
+
+            cur.execute(f"INSERT OR REPLACE INTO issues (id, key, summary, status, updated_time, {field_names}) VALUES (?, ?, ?, ?, ?, {field_placeholders})",
+                        (issue.id, issue.key, issue.fields.summary, issue.fields.status.name, issue.fields.updated, *field_values))
+            print(f"Indexed {issue.key} \"{issue.fields.summary}\"")
+
+        conn.commit()
+
+        if len(issues) < batch_size:
+            # We're done
+            break
+
+        start_at += batch_size  # Increase the startAt offset for the next batch
+
 
 def main():
     try:
@@ -36,16 +131,20 @@ def main():
         elif o in ("-q", "--query"):
             query=True
 
-    if not index and not query:
-        dash.init_window()
-        sys.exit(0)
-
     if index and query:
         eprint("--index and --query are incompatible arguments.")
         sys.exit(1)
 
-    print("index", index)
-    print("query", query)
+    schema = load_schema()
+
+    conn = create_database(schema['custom_fields'])
+
+    if index:
+        update_jira_index(conn, schema['custom_fields'])
+        sys.exit(0)
+
+    dash.init_window(conn, schema)
+    conn.close()
 
 if __name__ == "__main__":
     main()
