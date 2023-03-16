@@ -7,7 +7,7 @@ from datetime import datetime
 
 from jira import JIRA
 
-import dash
+from dash import dash
 
 VERSION = "0.1.0"
 
