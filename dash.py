@@ -11,13 +11,22 @@ class Item(GObject.GObject):
         GObject.GObject.__init__(self)
         self.fields = fields
 
+class FilterCheckMenuItem(Gtk.CheckMenuItem):
+    def __init__(self, label, filter_group_name, filter_value, filter_toggle_callback):
+        super().__init__(label=label)
+        self._filter_group_name = filter_group_name
+        self._filter_value = filter_value
+        self.connect("toggled", filter_toggle_callback)
+
+    def get_filter_info(self):
+        return self._filter_group_name, self._filter_value
 
 class MyWindow(Gtk.Window):
     def __init__(self, conn, schema):
         self._dbconn = conn
         self._columns = schema["gui"]["columns"]
         self._filters = schema["gui"]["filters"]
-        self._active_filters = schema["gui"]["filters"]["default_filters"]
+        self._active_filters = {filter_group: set(obj['default_filters']) for filter_group, obj in self._filters.items()}
 
         Gtk.Window.__init__(self, title="Search Query", type=Gtk.WindowType.POPUP)
         self.set_size_request(WIDTH, HEIGHT)
@@ -30,7 +39,6 @@ class MyWindow(Gtk.Window):
         entry_box.set_size_request(-1, 60)  # Set the height of the input box
         vbox.pack_start(entry_box, False, False, 0)
 
-
         textbox = Gtk.Entry()
         textbox.set_valign(Gtk.Align.FILL)  # Fill the height of the input box
         textbox.set_max_length(200)  # Set the maximum length of the input text
@@ -42,7 +50,7 @@ class MyWindow(Gtk.Window):
         filter_box = Gtk.Box()
         vbox.pack_start(filter_box, False, False, 0)
 
-        self.create_filter_buttons(filter_box)
+        self.create_filter_menus(filter_box)
 
         self.liststore = Gio.ListStore()
         self.listbox = Gtk.ListBox()
@@ -58,27 +66,37 @@ class MyWindow(Gtk.Window):
         scrolled_window.add(self.listbox)
         vbox.pack_start(scrolled_window, True, True, 0)
 
-    def create_filter_buttons(self, filter_box):
-        cur = self._dbconn.cursor()
-        #cur.execute(f"SELECT DISTINCT {self._filters['field']} FROM issues ORDER BY {self._filters['field']} ASC LIMIT 10")
-        cur.execute(f"""SELECT {self._filters['field']}, COUNT(*) as count
-                    FROM issues
-                    GROUP BY {self._filters['field']}
-                    ORDER BY count DESC
-                    LIMIT 8""")
+        self.update_search_results("")
 
-        for row in cur.fetchall():
-            filter_value = row[0]
-            button = Gtk.ToggleButton(label=filter_value)
-            button.set_active(filter_value in self._active_filters)
-            button.connect("toggled", self.on_filter_button_toggled, filter_value)
-            filter_box.pack_start(button, False, False, 0)
+    def create_filter_menus(self, filter_box):
+        for filter_group, filter_config in self._filters.items():
+            filter_menu_button = Gtk.MenuButton.new()
+            filter_menu_button.set_label(filter_group.capitalize())
+            filter_menu = Gtk.Menu.new()
 
-    def on_filter_button_toggled(self, button, filter_value):
-        if button.get_active():
-            self._active_filters.append(filter_value)
+            cur = self._dbconn.cursor()
+            cur.execute(f"""SELECT {filter_group}, COUNT(*) as count
+                        FROM issues
+                        GROUP BY {filter_group}
+                        ORDER BY count DESC
+                        LIMIT 20""")
+
+            for row in cur.fetchall():
+                filter_value = row[0] if row[0] else "None"
+                check_menu_item = FilterCheckMenuItem(filter_value, filter_group, filter_value, self.on_filter_item_toggled)
+                check_menu_item.set_active(filter_value in filter_config["default_filters"])
+                filter_menu.append(check_menu_item)
+
+            filter_menu.show_all()
+            filter_menu_button.set_popup(filter_menu)
+            filter_box.pack_start(filter_menu_button, False, False, 0)
+
+    def on_filter_item_toggled(self, check_menu_item):
+        filter_group, filter_value = check_menu_item.get_filter_info()
+        if check_menu_item.get_active():
+            self._active_filters[filter_group].add(filter_value)
         else:
-            self._active_filters.remove(filter_value)
+            self._active_filters[filter_group].remove(filter_value)
 
         self.update_search_results(self._entry.get_text())
 
@@ -112,17 +130,26 @@ class MyWindow(Gtk.Window):
     def update_search_results(self, query):
         self.liststore.remove_all()
 
-        if query == "":
-            return
-
         cur = self._dbconn.cursor()
 
         select_columns = ", ".join(self._columns)
         query_columns = " OR ".join([f"{col} LIKE ?" for col in self._columns])
-        filter_condition = f"{self._filters['field']} IN ({','.join(['?'] * len(self._active_filters))})"
 
-        cur.execute(f"SELECT {select_columns} FROM issues WHERE ({query_columns}) AND ({filter_condition}) ORDER BY updated_time LIMIT 100",
-                    tuple([f"%{query}%"] * len(self._columns) + list(self._active_filters)))
+        filter_conditions = []
+        filter_values = []
+        for field, filter_set in self._active_filters.items():
+            if filter_set:
+                filter_conditions.append(f"{field} IN ({','.join(['?'] * len(filter_set))})")
+                filter_values.extend(filter_set)
+
+        filter_condition = " AND ".join(filter_conditions) if filter_conditions else "1"
+
+        sql = f"""SELECT {select_columns} FROM issues
+                  WHERE ({query_columns}) AND ({filter_condition})
+                  ORDER BY updated_time DESC LIMIT 100"""
+
+        cur.execute(sql, tuple([f"%{query}%"] * len(self._columns) + filter_values))
+
         # Append columns
         item = Item(fields=self._columns)
         self.liststore.append(item)
@@ -131,6 +158,7 @@ class MyWindow(Gtk.Window):
             item = Item(fields=row)
             self.liststore.append(item)
 
+
 def init_window(conn, schema):
     screen = Gdk.Screen.get_default()
     provider = Gtk.CssProvider()
@@ -138,48 +166,7 @@ def init_window(conn, schema):
     style_context.add_provider_for_screen(
             screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
-    css = b"""
-    * {
-        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-        font-size: 14px;
-    }
-
-    window {
-        background-color: #F0F0F0;
-        border-radius: 6px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-    }
-
-    entry {
-        min-height: 30px;
-        padding: 5px 10px;
-        background-color: #FFFFFF;
-        border: 1px solid #CCCCCC;
-        border-radius: 3px;
-    }
-
-    entry:focus {
-        border-color: #66AFE9;
-    }
-
-    listbox {
-        background-color: #FFFFFF;
-    }
-
-    label {
-        padding: 5px 10px;
-        color: #333333;
-    }
-
-    label:hover {
-        background-color: #F0F0F0;
-    }
-
-    box {
-        padding: 10px;
-    }
-    """
-    provider.load_from_data(css)
+    provider.load_from_path("styles.css")
 
     win = MyWindow(conn, schema)
     win.connect("delete-event", Gtk.main_quit)
