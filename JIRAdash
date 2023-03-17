@@ -43,6 +43,13 @@ def get_field_value(issue, field_path):
         if not value:
             break
         value = getattr(value, part, None)
+    if value:
+        return value
+    value = issue.fields
+    for part in field_parts:
+        if not value:
+            break
+        value = getattr(value, part, None)
     return value
 
 def create_database(fields):
@@ -92,13 +99,27 @@ def update_jira_index(conn, fields):
 
         # Wrap the issues list in tqdm to display the progress bar
         for issue in issues:
-            field_values = [get_field_value(issue.fields, field_id) for field_id in fields.values()]
-            field_names = ", ".join(fields.keys())
-            field_placeholders = ", ".join(["?" for _ in fields.keys()])
+            # Common fields
+            field_keys = ["id", "key", "summary", "status", "updated_time"]
+            field_names = ["id", "key", "summary", "status.name", "updated"]
 
-            cur.execute(f"INSERT OR REPLACE INTO issues (id, key, summary, status, updated_time, {field_names}) VALUES (?, ?, ?, ?, ?, {field_placeholders})",
-                        (issue.id, issue.key, issue.fields.summary, issue.fields.status.name, issue.fields.updated, *field_values))
+            field_keys += fields.keys()
+            field_names += fields.values()
+            field_placeholders = ", ".join(["?" for _ in field_keys])
+            
+            cur.execute(f"SELECT {','.join(field_keys)} FROM issues WHERE id={issue.id} LIMIT 1")
+            old = cur.fetchone()
+            old = old if old else [None] * len(field_keys)
+
+            fetched = [get_field_value(issue, path) for path in field_names]
+            #print(fetched)
+
+            cur.execute(f"INSERT OR REPLACE INTO issues ({','.join(field_keys)}) VALUES ({field_placeholders})", (*fetched,))
             print(f"Indexed {issue.key} \"{issue.fields.summary}\"")
+
+            for i in range(len(field_keys)):
+                if str(old[i]) != str(fetched[i]):
+                    print(f"** {field_keys[i]}: {old[i]} -> {fetched[i]}")
 
         conn.commit()
 
