@@ -6,17 +6,18 @@ from gi.repository import Gtk, Gdk
 from dash.controller import DashController
 from dash.model import DashModel
 
-def init_window(conn, schema):
+def init_window(conn, schema, styles):
     screen = Gdk.Screen.get_default()
     provider = Gtk.CssProvider()
     style_context = Gtk.StyleContext()
     style_context.add_provider_for_screen(
         screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
-    provider.load_from_path("styles.css")
+    provider.load_from_path(styles)
 
     model = DashModel(conn, schema)
     controller = DashController(model, schema)
     controller._view.connect("delete-event", Gtk.main_quit)
     controller._view.show_all()
+    controller.update_search_results("")
     Gtk.main()

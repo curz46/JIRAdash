@@ -1,4 +1,4 @@
-from gi.repository import Gtk, Gio, Pango
+from gi.repository import Gtk, Gdk, Gio, Pango
 from dash.view import DashView, Item
 from dash.model import DashModel
 import os
@@ -11,12 +11,15 @@ class DashController:
         self._active_filters = {filter_group: set(obj['default_filters']) for filter_group, obj in self._filters.items()}
         self._view = DashView(self, schema)
 
+        self._keys = {}
+
     def get_active_filters(self):
         return self._active_filters
 
     def create_filter_menus(self, filter_box):
         for filter_group, filter_config in self._filters.items():
             filter_menu_button = Gtk.MenuButton.new()
+            filter_menu_button.set_can_focus(False)
             filter_menu_button.set_label(filter_group.capitalize())
             filter_menu = Gtk.Menu.new()
 
@@ -51,6 +54,7 @@ class DashController:
 
     def create_widget_func(self, item):
         grid = Gtk.Grid()
+        grid.item = item
         grid.set_column_spacing(2)
         grid.set_size_request(-1, 30)
 
@@ -71,6 +75,57 @@ class DashController:
             grid.attach(label, i, 0, 1, 1)
 
         return grid
+
+    def on_typing(self, widget, event):
+        keyval = event.keyval
+        self._keys[keyval] = True
+        selected_row = self._view.listbox.get_selected_row()
+
+        keyval = event.keyval
+        if keyval == Gdk.KEY_Up:
+            # Handle up arrow key
+            if selected_row:
+                rows = self._view.listbox.get_children()
+                index = rows.index(selected_row)
+                if index > 0:
+                    prev_row = self._view.listbox.get_row_at_index(index - 1)
+                    self._view.listbox.select_row(prev_row)
+            return True  # To prevent further processing of the event
+        elif keyval == Gdk.KEY_Down:
+            # Handle down arrow key
+            if selected_row:
+                rows = self._view.listbox.get_children()
+                index = rows.index(selected_row)
+                if index < len(rows) - 1:
+                    next_row = self._view.listbox.get_row_at_index(index + 1)
+                    self._view.listbox.select_row(next_row)
+            else:
+                selected_row = self._view.listbox.get_row_at_index(0)
+                self._view.listbox.select_row(selected_row)
+            return True  # To prevent further processing of the event
+        elif keyval == Gdk.KEY_Return:
+            if selected_row:
+                selected_row.activate()
+        return False  # Allow further processing of the event
+
+    def on_key_press(self, widget, event):
+        k = event.keyval
+        self._keys[k] = True
+        print("on_key_release", event)
+        print(f"{k} = {self._keys[k]}")
+
+    def on_key_release(self, widget, event):
+        k = event.keyval
+        self._keys[k] = False
+        print("on_key_release", event)
+        print(f"{k} = {self._keys[k]}")
+
+    def is_key_pressed(self, k):
+        if k not in self._keys:
+            return False
+        print(f"{k} = {self._keys[k]}")
+        return self._keys[k]
+
 
 class FilterCheckMenuItem(Gtk.CheckMenuItem):
     def __init__(self, label, filter_group_name, filter_value, filter_toggle_callback):

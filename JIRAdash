@@ -5,21 +5,23 @@ import os
 import sqlite3
 from datetime import datetime
 
+from config import get_paths
+
 from jira import JIRA
 
 from dash import dash
 
 VERSION = "0.1.0"
 
-SCHEMA_FILE = "schema.json"
+CONFIG_PATHS = get_paths()
 
+DATABASE_NAME = "issues.db"
+
+# Get the directory of the current script
 JIRA_URL = os.environ.get("JIRA_URL")
 JIRA_USERNAME = os.environ.get("JIRA_USERNAME")
 JIRA_PASSWORD = os.environ.get("JIRA_PASSWORD")
-
 JIRA_QUERY = os.environ.get("JIRA_QUERY")
-
-DATABASE_NAME = "jira_issues.db"
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -32,7 +34,13 @@ def usage():
 
 
 def load_schema():
-    with open(SCHEMA_FILE, "r") as f:
+    schema_file = CONFIG_PATHS["schema.json"]
+    try:
+        f = open(schema_file, "r") 
+    except FileNotFoundError:
+        eprint(f"{schema_file} is needed to parse JIRA objects, please create it.")
+        sys.exit(1)
+    else:
         data = json.load(f)
         return data
 
@@ -53,11 +61,11 @@ def get_field_value(issue, field_path):
     return value
 
 def create_database(fields):
-    conn = sqlite3.connect(DATABASE_NAME)
+    conn = sqlite3.connect(CONFIG_PATHS["issues.db"])
     cur = conn.cursor()
     field_columns = ", ".join([f"{key} TEXT" for key in fields.keys()])
-    cur.execute(f'''CREATE TABLE IF NOT EXISTS issues
-                   (id INTEGER PRIMARY KEY, key TEXT, summary TEXT, status TEXT, updated_time TEXT, {field_columns})''')
+    cur.execute(f"""CREATE TABLE IF NOT EXISTS issues
+                   (id INTEGER PRIMARY KEY, key TEXT, summary TEXT, status TEXT, updated_time TEXT, {field_columns})""")
     conn.commit()
     return conn
 
@@ -124,7 +132,7 @@ def update_jira_index(conn, fields):
         conn.commit()
 
         if len(issues) < batch_size:
-            # We're done
+            # We"re done
             break
 
         start_at += batch_size  # Increase the startAt offset for the next batch
@@ -158,13 +166,13 @@ def main():
 
     schema = load_schema()
 
-    conn = create_database(schema['custom_fields'])
+    conn = create_database(schema["custom_fields"])
 
     if index:
-        update_jira_index(conn, schema['custom_fields'])
+        update_jira_index(conn, schema["custom_fields"])
         sys.exit(0)
 
-    dash.init_window(conn, schema)
+    dash.init_window(conn, schema, CONFIG_PATHS["styles.css"])
     conn.close()
 
 if __name__ == "__main__":
